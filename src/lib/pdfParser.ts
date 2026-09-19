@@ -21,6 +21,7 @@ const SECTION_HEADINGS = [
 ];
 
 export async function extractTextFromPdf(buffer: Buffer) {
+  await installPdfRuntimePolyfills();
   const errors: string[] = [];
   for (const extractor of [extractWithPdfJs, extractWithPdfParse]) {
     try {
@@ -121,6 +122,16 @@ async function extractWithPdfParse(buffer: Buffer) {
   } finally {
     await parser.destroy();
   }
+}
+
+async function installPdfRuntimePolyfills() {
+  const globalScope = globalThis as unknown as Record<string, unknown>;
+  if (globalScope.DOMMatrix && globalScope.ImageData && globalScope.Path2D) return;
+
+  const canvas = await import("@napi-rs/canvas");
+  globalScope.DOMMatrix ??= canvas.DOMMatrix;
+  globalScope.ImageData ??= canvas.ImageData;
+  globalScope.Path2D ??= canvas.Path2D;
 }
 
 function findPersona(text: string, label: string) {

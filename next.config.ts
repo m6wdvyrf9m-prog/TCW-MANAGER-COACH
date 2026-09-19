@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  serverExternalPackages: ["pdfkit", "pdfjs-dist"],
+  serverExternalPackages: ["@napi-rs/canvas", "pdfkit", "pdfjs-dist", "pdf-parse"],
   experimental: {
     serverActions: {
       bodySizeLimit: "2mb"
