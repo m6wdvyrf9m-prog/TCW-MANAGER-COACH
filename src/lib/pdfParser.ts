@@ -10,14 +10,46 @@ const COLOUR_PATTERNS: Array<[ColourEnergy, RegExp]> = [
 
 const SECTION_HEADINGS = [
   "strengths",
+  "key strengths",
   "value to the team",
+  "value to the organisation",
   "possible blind spots",
+  "possible weaknesses",
   "blind spots",
+  "weaknesses",
   "communication",
+  "effective communication",
+  "barriers to effective communication",
   "motivators",
+  "what motivates",
   "management style",
+  "managing",
+  "ideal environment",
   "stress",
-  "opposite type"
+  "opposite type",
+  "suggestions for development",
+  "creating your ideal environment",
+  "perceptions"
+];
+
+const COLOUR_WINDOW_PATTERN = /colour dynamics|cool blue|earth green|sunshine yellow|fiery red|blue\s+green\s+yellow\s+red/i;
+
+const INSIGHTS_TYPE_LABELS = [
+  "directing motivator",
+  "motivating director",
+  "inspiring motivator",
+  "supporting helper",
+  "coordinating supporter",
+  "observing coordinator",
+  "reforming observer",
+  "director",
+  "motivator",
+  "inspirer",
+  "helper",
+  "supporter",
+  "coordinator",
+  "observer",
+  "reformer"
 ];
 
 const FOOTER_PATTERNS = [
@@ -89,21 +121,27 @@ export function extractProfileFromText(text: string): BehaviouralContext {
 
   const conscious = findPersona(normalized, "conscious persona");
   const lessConscious = findPersona(normalized, "less conscious persona");
-  const strengths = extractListAfterHeading(cleanedText, ["strengths", "value to the team"], base.strengths);
-  const watchOuts = extractListAfterHeading(cleanedText, ["possible blind spots", "blind spots", "watch outs"], base.watchOuts);
-  const communicationNeeds = extractListAfterHeading(cleanedText, ["communication", "communicating with"], base.communicationNeeds);
-  const motivators = extractListAfterHeading(cleanedText, ["motivators", "what motivates"], base.motivators);
-  const stressors = extractListAfterHeading(cleanedText, ["stress", "may become stressed"], base.stressors);
+  const typeFromText = findInsightsType(normalized);
+  const strengths = extractListAfterHeading(cleanedText, ["strengths", "key strengths", "value to the team"], base.strengths);
+  const watchOuts = extractListAfterHeading(cleanedText, ["possible blind spots", "blind spots", "possible weaknesses", "weaknesses", "watch outs"], base.watchOuts);
+  const communicationNeeds = extractListAfterHeading(cleanedText, ["communication", "effective communication", "communicating with"], base.communicationNeeds);
+  const motivators = extractListAfterHeading(cleanedText, ["motivators", "what motivates", "ideal environment"], base.motivators);
+  const stressors = extractListAfterHeading(cleanedText, ["stress", "may become stressed", "barriers to effective communication"], base.stressors);
+  const decisionStyle = extractParagraphAfterHeading(cleanedText, ["decision making", "decision-making", "approach to decision"]);
+  const leadershipImpact = extractParagraphAfterHeading(cleanedText, ["management style", "managing", "leadership style"]);
 
   return {
     ...base,
-    consciousPersona: conscious,
+    consciousPersona: conscious || typeFromText,
     lessConsciousPersona: lessConscious,
     strengths,
     watchOuts,
     motivators,
     stressors,
     communicationNeeds,
+    decisionStyle: decisionStyle || base.decisionStyle,
+    leadershipImpact: leadershipImpact || base.leadershipImpact,
+    blindSpots: unique([...watchOuts, ...base.blindSpots]).slice(0, 8),
     source: "pdf-extracted",
     extractionNotes: [
       ...base.extractionNotes,
@@ -158,6 +196,8 @@ async function extractWithPdf2Json(buffer: Buffer) {
   const data = await new Promise<{
     Pages?: Array<{
       Texts?: Array<{
+        x?: number;
+        y?: number;
         R?: Array<{ T?: string }>;
       }>;
     }>;
@@ -169,13 +209,7 @@ async function extractWithPdf2Json(buffer: Buffer) {
     parser.parseBuffer(buffer);
   });
 
-  return (
-    data.Pages?.map((page) =>
-      page.Texts?.map((text) =>
-        text.R?.map((run) => decodePdfTextRun(run.T ?? "")).join("")
-      ).join(" ") ?? ""
-    ).join("\n") ?? ""
-  );
+  return data.Pages?.map((page) => rebuildPdf2JsonPageLines(page.Texts ?? [])).join("\n") ?? "";
 }
 
 function decodePdfTextRun(value: string) {
@@ -204,6 +238,13 @@ function findPersona(text: string, label: string) {
   return match?.[1]?.trim() ?? "";
 }
 
+function findInsightsType(text: string) {
+  for (const label of INSIGHTS_TYPE_LABELS) {
+    if (new RegExp(`\\b${escapeRegExp(label)}\\b`, "i").test(text)) return titleCase(label);
+  }
+  return "";
+}
+
 function extractListAfterHeading(text: string, headings: string[], fallback: string[]) {
   const lines = cleanExtractedLines(text);
 
@@ -215,12 +256,37 @@ function extractListAfterHeading(text: string, headings: string[], fallback: str
       const candidate = lines[index + offset];
       if (!candidate) continue;
       const lower = candidate.toLowerCase();
-      if (SECTION_HEADINGS.some((heading) => lower === heading || lower.startsWith(`${heading}:`))) break;
-      if (candidate.length > 8 && candidate.length < 180) found.push(candidate.replace(/^[-:]\s*/, ""));
+      if (isSectionHeading(lower)) break;
+      if (isUsefulProfileLine(candidate)) found.push(candidate.replace(/^[-:]\s*/, ""));
     }
   }
 
   return unique(found.length ? found : fallback).slice(0, 8);
+}
+
+function extractParagraphAfterHeading(text: string, headings: string[]) {
+  const lines = cleanExtractedLines(text);
+  const found: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].toLowerCase();
+    if (!headings.some((heading) => line.includes(heading))) continue;
+    for (let offset = 1; offset <= 5; offset += 1) {
+      const candidate = lines[index + offset];
+      if (!candidate) continue;
+      if (isSectionHeading(candidate.toLowerCase())) break;
+      if (isUsefulProfileLine(candidate)) found.push(candidate.replace(/^[-:]\s*/, ""));
+    }
+    if (found.length) break;
+  }
+  return found.join(" ").slice(0, 400);
+}
+
+function isSectionHeading(line: string) {
+  return SECTION_HEADINGS.some((heading) => line === heading || line.startsWith(`${heading}:`) || line.includes(` ${heading}`));
+}
+
+function isUsefulProfileLine(candidate: string) {
+  return candidate.length > 8 && candidate.length < 220 && !/^\d+(\.\d+)?$/.test(candidate) && !COLOUR_WINDOW_PATTERN.test(candidate);
 }
 
 function cleanExtractedText(text: string) {
@@ -242,16 +308,29 @@ function isFooterLine(line: string) {
 
 function extractColourScores(text: string): Partial<Record<ColourEnergy, number>> {
   const lines = cleanExtractedLines(text);
+  const rowScores = scoresFromLabelAndNumberRows(lines);
+  if (Object.keys(rowScores).length >= 2) return rowScores;
+
   const windows = lines
     .map((line, index) => ({ line, index }))
-    .filter(({ line }) => /colour dynamics|cool blue|earth green|sunshine yellow|fiery red/i.test(line))
-    .map(({ index }) => lines.slice(Math.max(0, index - 2), index + 8).join(" "));
+    .filter(({ line }) => COLOUR_WINDOW_PATTERN.test(line))
+    .map(({ index }) => lines.slice(Math.max(0, index - 3), index + 12));
 
-  const candidates = [lines.join(" "), ...windows];
+  const candidates = [
+    { lines, useOrderedBlock: false },
+    ...windows.map((windowLines) => ({ lines: windowLines, useOrderedBlock: true }))
+  ];
   const scores: Partial<Record<ColourEnergy, number>> = {};
 
   for (const candidate of candidates) {
-    const normalized = candidate.replace(/\s+/g, " ").trim();
+    if (candidate.useOrderedBlock) {
+      const orderedScores = scoresFromOrderedColourBlock(candidate.lines);
+      for (const [energy, score] of Object.entries(orderedScores)) {
+        scores[energy as ColourEnergy] = score;
+      }
+      if (Object.keys(orderedScores).length >= 2) continue;
+    }
+    const normalized = candidate.lines.join(" ").replace(/\s+/g, " ").trim();
     for (const energy of Object.keys(COLOUR_LABELS) as ColourEnergy[]) {
       const score = scoreNearColourLabel(normalized, energy);
       if (score === null) continue;
@@ -261,6 +340,20 @@ function extractColourScores(text: string): Partial<Record<ColourEnergy, number>
   }
 
   return Object.fromEntries(Object.entries(scores).filter(([, score]) => score !== Number.NEGATIVE_INFINITY)) as Partial<Record<ColourEnergy, number>>;
+}
+
+function scoresFromLabelAndNumberRows(lines: string[]) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const colourOrder = orderedColourLabels(lines[index]);
+    if (colourOrder.length < 2) continue;
+    const nearbyText = lines.slice(index + 1, index + 4).join(" ");
+    const numbers = (nearbyText.match(/\b\d{1,3}(?:\.\d+)?\b/g) ?? [])
+      .map(Number)
+      .filter((score) => Number.isFinite(score) && score >= 0 && score <= 100);
+    if (numbers.length < colourOrder.length) continue;
+    return Object.fromEntries(colourOrder.map((energy, scoreIndex) => [energy, numbers[scoreIndex]])) as Partial<Record<ColourEnergy, number>>;
+  }
+  return {};
 }
 
 function scoreNearColourLabel(text: string, energy: ColourEnergy) {
@@ -289,6 +382,58 @@ function friendlyEnergy(energy: ColourEnergy | "") {
     coolBlue: "Cool Blue"
   };
   return energy ? labels[energy] : "";
+}
+
+function scoresFromOrderedColourBlock(lines: string[]) {
+  const joined = lines.join(" ").replace(/\s+/g, " ");
+  const colourOrder = orderedColourLabels(joined);
+  if (colourOrder.length < 2) return {};
+
+  const numbers = lines
+    .flatMap((line) => line.match(/\b\d{1,3}(?:\.\d+)?\b/g) ?? [])
+    .map(Number)
+    .filter((score) => Number.isFinite(score) && score >= 0 && score <= 100);
+  if (numbers.length < colourOrder.length) return {};
+
+  const likelyScores = numbers.slice(-colourOrder.length);
+  return Object.fromEntries(colourOrder.map((energy, index) => [energy, likelyScores[index]])) as Partial<Record<ColourEnergy, number>>;
+}
+
+function orderedColourLabels(text: string) {
+  return (Object.keys(COLOUR_LABELS) as ColourEnergy[])
+    .map((energy) => ({
+      energy,
+      index: Math.min(
+        ...COLOUR_LABELS[energy].map((label) => {
+          const found = text.toLowerCase().indexOf(label);
+          return found === -1 ? Number.POSITIVE_INFINITY : found;
+        })
+      )
+    }))
+    .filter((item) => Number.isFinite(item.index))
+    .sort((a, b) => a.index - b.index)
+    .map((item) => item.energy);
+}
+
+function rebuildPdf2JsonPageLines(texts: Array<{ x?: number; y?: number; R?: Array<{ T?: string }> }>) {
+  const rows = new Map<number, Array<{ x: number; value: string }>>();
+  for (const text of texts) {
+    const value = text.R?.map((run) => decodePdfTextRun(run.T ?? "")).join("").trim();
+    if (!value) continue;
+    const rowKey = Math.round((text.y ?? 0) * 10);
+    const row = rows.get(rowKey) ?? [];
+    row.push({ x: text.x ?? 0, value });
+    rows.set(rowKey, row);
+  }
+
+  return [...rows.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, row]) => row.sort((a, b) => a.x - b.x).map((item) => item.value).join(" "))
+    .join("\n");
+}
+
+function titleCase(value: string) {
+  return value.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 export function normaliseProfileFormValue(value: string) {

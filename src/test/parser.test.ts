@@ -44,4 +44,29 @@ describe("Insights profile extraction", () => {
     expect(profile.extractionNotes.join(" ")).toContain("Colour Dynamics scores");
     expect(profile.extractionNotes.join(" ")).toContain("not stored");
   });
+
+  it("extracts Colour Dynamics scores when labels and values are on separate rows", () => {
+    const profile = extractProfileFromText(`
+      The Insights Discovery Colour Dynamics
+      Cool Blue Earth Green Sunshine Yellow Fiery Red
+      14 28 39 52
+      Personal Profile Page 8
+      © 2026 The Insights Group Ltd. All rights reserved.
+      Possible Weaknesses
+      Can move too quickly for quieter colleagues.
+      May overlook detailed follow-through.
+      What Motivates
+      Visible progress and energetic collaboration.
+      Barriers to Effective Communication
+      Too much ambiguity without a clear decision point.
+    `);
+
+    expect(profile.dominantEnergy).toBe("fieryRed");
+    expect(profile.secondaryEnergy).toBe("sunshineYellow");
+    expect(profile.confidence).toBe("high");
+    expect(profile.watchOuts).toContain("Can move too quickly for quieter colleagues.");
+    expect(profile.motivators).toContain("Visible progress and energetic collaboration.");
+    expect(profile.stressors).toContain("Too much ambiguity without a clear decision point.");
+    expect(profile.watchOuts.join(" ")).not.toMatch(/Insights Group|Personal Profile Page/i);
+  });
 });
