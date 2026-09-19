@@ -21,25 +21,18 @@ const SECTION_HEADINGS = [
 ];
 
 export async function extractTextFromPdf(buffer: Buffer) {
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const document = await pdfjs.getDocument({
-    data: new Uint8Array(buffer),
-    useSystemFonts: true
-  }).promise;
-  const pages: string[] = [];
-
-  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-    const page = await document.getPage(pageNumber);
-    const content = await page.getTextContent();
-    pages.push(
-      content.items
-        .map((item) => ("str" in item ? item.str : ""))
-        .join(" ")
-        .replace(/\s+/g, " ")
-    );
+  const errors: string[] = [];
+  for (const extractor of [extractWithPdfJs, extractWithPdfParse]) {
+    try {
+      const text = await extractor(buffer);
+      if (text.trim().length >= 20) return text;
+      errors.push("empty-text");
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
   }
 
-  return pages.join("\n");
+  throw new Error(`No selectable PDF text could be extracted. ${errors.join(" | ")}`);
 }
 
 export async function parseInsightsPdf(buffer: Buffer): Promise<BehaviouralContext> {
@@ -90,6 +83,44 @@ export function extractProfileFromText(text: string): BehaviouralContext {
       "Please confirm and correct the extracted summary before using it for coaching."
     ]
   };
+}
+
+async function extractWithPdfJs(buffer: Buffer) {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const document = await pdfjs.getDocument({
+    data: new Uint8Array(buffer),
+    useSystemFonts: true
+  }).promise;
+  const pages: string[] = [];
+
+  try {
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      pages.push(
+        content.items
+          .map((item) => ("str" in item ? item.str : ""))
+          .join(" ")
+          .replace(/\s+/g, " ")
+      );
+      page.cleanup();
+    }
+  } finally {
+    await document.destroy();
+  }
+
+  return pages.join("\n");
+}
+
+async function extractWithPdfParse(buffer: Buffer) {
+  const { PDFParse } = await import("pdf-parse");
+  const parser = new PDFParse({ data: new Uint8Array(buffer) });
+  try {
+    const result = await parser.getText({ pageJoiner: "\n" });
+    return result.text;
+  } finally {
+    await parser.destroy();
+  }
 }
 
 function findPersona(text: string, label: string) {
