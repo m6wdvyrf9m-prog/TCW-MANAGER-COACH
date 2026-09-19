@@ -21,9 +21,8 @@ const SECTION_HEADINGS = [
 ];
 
 export async function extractTextFromPdf(buffer: Buffer) {
-  await installPdfRuntimePolyfills();
   const errors: string[] = [];
-  for (const extractor of [extractWithPdfJs, extractWithPdfParse]) {
+  for (const extractor of [extractWithPdf2Json, extractWithPdfJs, extractWithPdfParse]) {
     try {
       const text = await extractor(buffer);
       if (text.trim().length >= 20) return text;
@@ -87,6 +86,7 @@ export function extractProfileFromText(text: string): BehaviouralContext {
 }
 
 async function extractWithPdfJs(buffer: Buffer) {
+  await installPdfRuntimePolyfills();
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const document = await pdfjs.getDocument({
     data: new Uint8Array(buffer),
@@ -114,6 +114,7 @@ async function extractWithPdfJs(buffer: Buffer) {
 }
 
 async function extractWithPdfParse(buffer: Buffer) {
+  await installPdfRuntimePolyfills();
   const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: new Uint8Array(buffer) });
   try {
@@ -122,6 +123,32 @@ async function extractWithPdfParse(buffer: Buffer) {
   } finally {
     await parser.destroy();
   }
+}
+
+async function extractWithPdf2Json(buffer: Buffer) {
+  const PDFParser = (await import("pdf2json")).default;
+  const parser = new PDFParser(null, true);
+  const data = await new Promise<{
+    Pages?: Array<{
+      Texts?: Array<{
+        R?: Array<{ T?: string }>;
+      }>;
+    }>;
+  }>((resolve, reject) => {
+    parser.on("pdfParser_dataError", (error: Error | { parserError: Error }) => {
+      reject("parserError" in error ? error.parserError : error);
+    });
+    parser.on("pdfParser_dataReady", resolve);
+    parser.parseBuffer(buffer);
+  });
+
+  return (
+    data.Pages?.map((page) =>
+      page.Texts?.map((text) =>
+        text.R?.map((run) => decodeURIComponent(run.T ?? "")).join("")
+      ).join(" ") ?? ""
+    ).join("\n") ?? ""
+  );
 }
 
 async function installPdfRuntimePolyfills() {
