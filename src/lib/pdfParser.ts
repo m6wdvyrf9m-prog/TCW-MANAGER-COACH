@@ -145,10 +145,18 @@ async function extractWithPdf2Json(buffer: Buffer) {
   return (
     data.Pages?.map((page) =>
       page.Texts?.map((text) =>
-        text.R?.map((run) => decodeURIComponent(run.T ?? "")).join("")
+        text.R?.map((run) => decodePdfTextRun(run.T ?? "")).join("")
       ).join(" ") ?? ""
     ).join("\n") ?? ""
   );
+}
+
+function decodePdfTextRun(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 async function installPdfRuntimePolyfills() {
