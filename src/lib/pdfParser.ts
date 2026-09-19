@@ -20,6 +20,24 @@ const SECTION_HEADINGS = [
   "opposite type"
 ];
 
+const FOOTER_PATTERNS = [
+  /\bthe insights group\b/i,
+  /\binsights learning and development\b/i,
+  /\binsights discovery\b.*\ball rights reserved\b/i,
+  /\bcopyright\b.*\binsights\b/i,
+  /\bwww\.insights\.com\b/i,
+  /\bpersonal profile\b.*\bpage\b/i,
+  /^page\s+\d+(\s+of\s+\d+)?$/i,
+  /^©?\s*\d{4}\s+the insights group/i
+];
+
+const COLOUR_LABELS: Record<ColourEnergy, string[]> = {
+  coolBlue: ["cool blue", "blue"],
+  earthGreen: ["earth green", "green"],
+  sunshineYellow: ["sunshine yellow", "yellow"],
+  fieryRed: ["fiery red", "red"]
+};
+
 export async function extractTextFromPdf(buffer: Buffer) {
   const errors: string[] = [];
   for (const extractor of [extractWithPdf2Json, extractWithPdfJs, extractWithPdfParse]) {
@@ -41,32 +59,41 @@ export async function parseInsightsPdf(buffer: Buffer): Promise<BehaviouralConte
 }
 
 export function extractProfileFromText(text: string): BehaviouralContext {
-  const normalized = text.replace(/\s+/g, " ").trim();
+  const cleanedText = cleanExtractedText(text);
+  const normalized = cleanedText.replace(/\s+/g, " ").trim();
+  const colourScores = extractColourScores(cleanedText);
   const counts = COLOUR_PATTERNS.map(([energy, pattern]) => ({
     energy,
     count: (normalized.match(pattern) ?? []).length
   })).sort((a, b) => b.count - a.count);
+  const rankedScores = Object.entries(colourScores)
+    .map(([energy, score]) => ({ energy: energy as ColourEnergy, score }))
+    .filter((item) => typeof item.score === "number" && Number.isFinite(item.score))
+    .sort((a, b) => b.score - a.score);
 
-  const dominant = counts[0]?.count ? counts[0].energy : "";
-  const secondary = counts[1]?.count ? counts[1].energy : "";
+  const dominant = rankedScores[0]?.energy ?? (counts[0]?.count ? counts[0].energy : "");
+  const secondary = rankedScores[1]?.energy ?? (counts[1]?.count ? counts[1].energy : "");
+  const scoreNote = rankedScores.length
+    ? `Detected Colour Dynamics scores: ${rankedScores.map((item) => `${friendlyEnergy(item.energy)} ${item.score}`).join(", ")}.`
+    : "";
   const base = defaultBehaviouralContext({
     dominantEnergy: dominant,
     secondaryEnergy: secondary,
     source: "pdf-extracted",
-    confidence: counts[0]?.count >= 4 ? "high" : counts[0]?.count >= 2 ? "medium" : "low",
+    confidence: rankedScores.length >= 2 ? "high" : counts[0]?.count >= 4 ? "high" : counts[0]?.count >= 2 ? "medium" : "low",
     extractionNotes: [
       "The PDF was parsed in memory and the original file was not stored.",
-      dominant ? `Detected strongest colour signal: ${dominant}.` : "No strong colour-energy signal was detected."
-    ]
+      scoreNote || (dominant ? `Detected strongest colour signal: ${friendlyEnergy(dominant)}.` : "No strong colour-energy signal was detected.")
+    ].filter(Boolean)
   });
 
   const conscious = findPersona(normalized, "conscious persona");
   const lessConscious = findPersona(normalized, "less conscious persona");
-  const strengths = extractListAfterHeading(text, ["strengths", "value to the team"], base.strengths);
-  const watchOuts = extractListAfterHeading(text, ["possible blind spots", "blind spots", "watch outs"], base.watchOuts);
-  const communicationNeeds = extractListAfterHeading(text, ["communication", "communicating with"], base.communicationNeeds);
-  const motivators = extractListAfterHeading(text, ["motivators", "what motivates"], base.motivators);
-  const stressors = extractListAfterHeading(text, ["stress", "may become stressed"], base.stressors);
+  const strengths = extractListAfterHeading(cleanedText, ["strengths", "value to the team"], base.strengths);
+  const watchOuts = extractListAfterHeading(cleanedText, ["possible blind spots", "blind spots", "watch outs"], base.watchOuts);
+  const communicationNeeds = extractListAfterHeading(cleanedText, ["communication", "communicating with"], base.communicationNeeds);
+  const motivators = extractListAfterHeading(cleanedText, ["motivators", "what motivates"], base.motivators);
+  const stressors = extractListAfterHeading(cleanedText, ["stress", "may become stressed"], base.stressors);
 
   return {
     ...base,
@@ -178,10 +205,7 @@ function findPersona(text: string, label: string) {
 }
 
 function extractListAfterHeading(text: string, headings: string[], fallback: string[]) {
-  const lines = text
-    .split(/\r?\n|[•\u2022]/)
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
+  const lines = cleanExtractedLines(text);
 
   const found: string[] = [];
   for (let index = 0; index < lines.length; index += 1) {
@@ -197,6 +221,74 @@ function extractListAfterHeading(text: string, headings: string[], fallback: str
   }
 
   return unique(found.length ? found : fallback).slice(0, 8);
+}
+
+function cleanExtractedText(text: string) {
+  return cleanExtractedLines(text).join("\n");
+}
+
+function cleanExtractedLines(text: string) {
+  return text
+    .split(/\r?\n|[•\u2022]/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter((line) => line && !isFooterLine(line));
+}
+
+function isFooterLine(line: string) {
+  const compact = line.replace(/\s+/g, " ").trim();
+  if (!compact) return true;
+  return FOOTER_PATTERNS.some((pattern) => pattern.test(compact));
+}
+
+function extractColourScores(text: string): Partial<Record<ColourEnergy, number>> {
+  const lines = cleanExtractedLines(text);
+  const windows = lines
+    .map((line, index) => ({ line, index }))
+    .filter(({ line }) => /colour dynamics|cool blue|earth green|sunshine yellow|fiery red/i.test(line))
+    .map(({ index }) => lines.slice(Math.max(0, index - 2), index + 8).join(" "));
+
+  const candidates = [lines.join(" "), ...windows];
+  const scores: Partial<Record<ColourEnergy, number>> = {};
+
+  for (const candidate of candidates) {
+    const normalized = candidate.replace(/\s+/g, " ").trim();
+    for (const energy of Object.keys(COLOUR_LABELS) as ColourEnergy[]) {
+      const score = scoreNearColourLabel(normalized, energy);
+      if (score === null) continue;
+      scores[energy] = Math.max(scores[energy] ?? Number.NEGATIVE_INFINITY, score);
+    }
+    if (Object.keys(scores).length >= 2) break;
+  }
+
+  return Object.fromEntries(Object.entries(scores).filter(([, score]) => score !== Number.NEGATIVE_INFINITY)) as Partial<Record<ColourEnergy, number>>;
+}
+
+function scoreNearColourLabel(text: string, energy: ColourEnergy) {
+  const labels = COLOUR_LABELS[energy].map(escapeRegExp).join("|");
+  const after = text.match(new RegExp(`(?:${labels})\\D{0,28}(\\d{1,3}(?:\\.\\d+)?)`, "i"));
+  const before = text.match(new RegExp(`(\\d{1,3}(?:\\.\\d+)?)\\D{0,28}(?:${labels})`, "i"));
+  return validColourScore(after?.[1]) ?? validColourScore(before?.[1]);
+}
+
+function validColourScore(value?: string) {
+  if (!value) return null;
+  const score = Number(value);
+  if (!Number.isFinite(score) || score < 0 || score > 100) return null;
+  return score;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function friendlyEnergy(energy: ColourEnergy | "") {
+  const labels: Record<ColourEnergy, string> = {
+    fieryRed: "Fiery Red",
+    sunshineYellow: "Sunshine Yellow",
+    earthGreen: "Earth Green",
+    coolBlue: "Cool Blue"
+  };
+  return energy ? labels[energy] : "";
 }
 
 export function normaliseProfileFormValue(value: string) {

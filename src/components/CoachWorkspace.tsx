@@ -1,7 +1,7 @@
 "use client";
 
 import { CHALLENGE_TYPES, TCW_CONTACT_EMAIL } from "@/config/coachingFramework";
-import type { BehaviouralContext, StoredCoachSession } from "@/lib/types";
+import type { BehaviouralContext, CoachingPlan, StoredCoachSession } from "@/lib/types";
 import {
   CalendarCheck,
   CheckCircle2,
@@ -10,6 +10,7 @@ import {
   HelpCircle,
   Loader2,
   MessageSquareText,
+  RotateCw,
   ShieldCheck,
   Sparkles,
   Upload
@@ -422,6 +423,8 @@ function PlanSections({
         <p><strong>Close:</strong> {plan.conversationPlan.close}</p>
       </div>
 
+      <ActionAlignmentWheel plan={plan} />
+
       <form className="action-form" onSubmit={saveActionPlan}>
         <h3>Action Plan</h3>
         <div className="action-options">
@@ -460,6 +463,90 @@ function PlanSections({
       </form>
     </section>
   );
+}
+
+function ActionAlignmentWheel({ plan }: { plan: CoachingPlan }) {
+  const causes = uniqueList([
+    ...plan.personProcess.personFactors.map((item) => `Person: ${item}`),
+    ...plan.personProcess.processFactors.map((item) => `Process: ${item}`)
+  ]).slice(0, 8);
+  const actions = plan.recommendedActions.map((item) => item.action).slice(0, 8);
+  const details = plan.recommendedActions.map((item) => `${item.timing}: ${item.successMeasure}`).slice(0, 8);
+  const [causeIndex, setCauseIndex] = useState(0);
+  const [actionIndex, setActionIndex] = useState(0);
+  const [detailIndex, setDetailIndex] = useState(0);
+
+  if (!causes.length || !actions.length || !details.length) return null;
+
+  return (
+    <div className="action-wheel" aria-labelledby="action-wheel-title">
+      <div className="action-wheel-copy">
+        <p className="eyebrow">Action alignment</p>
+        <h3 id="action-wheel-title">Spin the next move into focus</h3>
+        <p>
+          Try different cause, action and measure combinations before choosing what you will commit to.
+        </p>
+        <div className="wheel-controls">
+          <button className="secondary-button" type="button" onClick={() => setCauseIndex((value) => (value + 1) % causes.length)}>
+            <RotateCw aria-hidden="true" /> Cause
+          </button>
+          <button className="secondary-button" type="button" onClick={() => setActionIndex((value) => (value + 1) % actions.length)}>
+            <RotateCw aria-hidden="true" /> Action
+          </button>
+          <button className="secondary-button" type="button" onClick={() => setDetailIndex((value) => (value + 1) % details.length)}>
+            <RotateCw aria-hidden="true" /> Measure
+          </button>
+        </div>
+      </div>
+      <div className="wheel-stage" aria-hidden="true">
+        <WheelRing items={causes} selectedIndex={causeIndex} radius={43} className="cause-ring" />
+        <WheelRing items={actions} selectedIndex={actionIndex} radius={31} className="action-ring" />
+        <WheelRing items={details} selectedIndex={detailIndex} radius={19} className="detail-ring" />
+        <div className="wheel-core">Align</div>
+      </div>
+      <div className="alignment-panel">
+        <span>Cause</span>
+        <strong>{causes[causeIndex]}</strong>
+        <span>Action</span>
+        <strong>{actions[actionIndex]}</strong>
+        <span>Measure</span>
+        <strong>{details[detailIndex]}</strong>
+      </div>
+    </div>
+  );
+}
+
+function WheelRing({
+  items,
+  selectedIndex,
+  radius,
+  className
+}: {
+  items: string[];
+  selectedIndex: number;
+  radius: number;
+  className: string;
+}) {
+  const angle = 360 / items.length;
+  return (
+    <div className={`wheel-ring ${className}`} style={{ transform: `rotate(${-selectedIndex * angle}deg)` }}>
+      {items.map((item, index) => (
+        <span
+          className={index === selectedIndex ? "wheel-token selected" : "wheel-token"}
+          key={`${item}-${index}`}
+          style={{
+            transform: `rotate(${index * angle}deg) translate(${radius}%) rotate(${-index * angle}deg)`
+          }}
+        >
+          {shortWheelLabel(item)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function shortWheelLabel(value: string) {
+  return value.length > 32 ? `${value.slice(0, 29)}...` : value;
 }
 
 function Step({ label, done, active }: { label: string; done: boolean; active: boolean }) {
@@ -513,4 +600,8 @@ function listValue(form: FormData, name: string) {
     .split("\n")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function uniqueList(items: string[]) {
+  return Array.from(new Set(items.filter(Boolean)));
 }
